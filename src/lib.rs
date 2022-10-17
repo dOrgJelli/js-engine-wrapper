@@ -1,8 +1,21 @@
 pub mod wrap;
-use JSON::json;
 use wrap::*;
-use polywrap_wasm_rs::{JSON};
-use boa_engine::{ Context, JsValue };
+mod json;
+use json::boa_to_serde;
+use boa_engine::{ Context };
+
+// TODO: this should be removed and replaced with WASI
+use getrandom::{register_custom_getrandom, Error};
+
+fn super_insecure_rng(buf: &mut [u8]) -> Result<(), Error> {
+    for b in buf {
+        *b = 0;
+    }
+    Ok(())
+}
+
+register_custom_getrandom!(super_insecure_rng);
+
 pub fn eval(args: ArgsEval) -> EvalResult {
     let js_code = args.src;
 
@@ -11,16 +24,7 @@ pub fn eval(args: ArgsEval) -> EvalResult {
     match context.eval(js_code) {
         Ok(result) => {
             EvalResult {
-                value: Some(match &result {
-                    JsValue::Null => json!("null"),
-                    JsValue::Undefined => json!("undefined"),
-                    JsValue::Boolean(bool) => json!(bool),
-                    JsValue::String(string) => json!(string.to_string()),
-                    JsValue::Rational(f64) => json!(f64),
-                    JsValue::Integer(i32) => json!(i32),
-                    JsValue::BigInt(big_int) => json!(big_int.to_string()),
-                    _ => json!("Object or Symbol".to_string())          
-                }),
+                value: Some(boa_to_serde(&result, &mut context).unwrap()),
                 error: None
             }
         }
@@ -35,7 +39,7 @@ pub fn eval(args: ArgsEval) -> EvalResult {
 
 #[cfg(test)]
 mod tests {
-    use polywrap_wasm_rs::JSON::json;
+    use polywrap_wasm_rs::JSON::{json, Value};
 
     pub use crate::wrap::*;
 
@@ -44,11 +48,11 @@ mod tests {
         let args = ArgsEval {
             src: "const null_value = null; null_value".to_string(),
         };
-        
+
         let result = crate::eval(args);
 
         let expected = EvalResult {
-            value: Some(json!("null")),
+            value: Some(Value::Null),
             error: None
         };
         assert_eq!(result.value.unwrap(), expected.value.unwrap());
@@ -59,11 +63,11 @@ mod tests {
         let args = ArgsEval {
             src: "const undefined_value = undefined; undefined_value".to_string(),
         };
-        
+
         let result = crate::eval(args);
 
         let expected = EvalResult {
-            value: Some(json!("undefined")),
+            value: Some(json!(Value::Null)),
             error: None
         };
         assert_eq!(result.value.unwrap(), expected.value.unwrap());
@@ -74,7 +78,7 @@ mod tests {
         let args = ArgsEval {
             src: "'hello' + ' ' + 'world'".to_string(),
         };
-        
+
         let result = crate::eval(args);
 
         let expected = EvalResult {
@@ -89,7 +93,7 @@ mod tests {
         let args = ArgsEval {
             src: "const is_true = true; is_true".to_string(),
         };
-        
+
         let result = crate::eval(args);
 
         let expected = EvalResult {
@@ -104,7 +108,7 @@ mod tests {
         let args = ArgsEval {
             src: "const num = 123.456; num".to_string(),
         };
-        
+
         let result = crate::eval(args);
 
         let expected = EvalResult {
@@ -119,7 +123,7 @@ mod tests {
         let args = ArgsEval {
             src: "const num = 5; num".to_string(),
         };
-        
+
         let result = crate::eval(args);
 
         let expected = EvalResult {
@@ -134,7 +138,7 @@ mod tests {
         let args = ArgsEval {
             src: "const num = BigInt(9007199254740991); num".to_string(),
         };
-        
+
         let result = crate::eval(args);
 
         let expected = EvalResult {
@@ -149,20 +153,18 @@ mod tests {
         let args = ArgsEval {
             src: "const obj = { prop1: 1, prop2: 'hello' }; obj".to_string(),
         };
-        
+
         let result = crate::eval(args);
 
-        // let expected = EvalResult {
-        //     value: Some(json!({
-        //         "prop1": 1,
-        //         "prop2": "hello"
-        //     })),
-        //     error: None
-        // };
+        let expected = EvalResult {
+            value: Some(json!({
+                "prop1": 1,
+                "prop2": "hello"
+            })),
+            error: None
+        };
 
-        // assert_eq!(result.value.unwrap(), expected.value.unwrap());
-
-        assert_eq!(result.value.unwrap(), json!("Object or Symbol"));
+        assert_eq!(result.value.unwrap(), expected.value.unwrap());
     }
 
     #[test]
@@ -170,7 +172,7 @@ mod tests {
         let args = ArgsEval {
             src: "undefined_variable".to_string(),
         };
-        
+
         let result = crate::eval(args);
 
         let expected = EvalResult {
